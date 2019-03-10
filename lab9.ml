@@ -23,6 +23,11 @@ according to the semantic rules presented in Chapter 13.
 Before beginning, what should this expression evaluate to? Test out
 your prediction in the OCaml REPL. *)
 
+(* The expression evaluates to 36:
+  # let x = 3 + 5 in (fun x -> x * x) (x - 2) ;;
+  -  : int = 36
+*)
+
 (* The exercises will take you through the derivation stepwise, so
 that you can use the results from earlier exercises in the later
 exercises.
@@ -106,7 +111,8 @@ equation in some exercises below. What should such an equation look
 like? (Below, we'll refer to this as Eq. 11.)
 ....................................................................*)
 
-(*    (P R)[x |-> Q] = ????    *)
+(*    (P R)[x |-> Q] = P[x |-> Q]  R[x |-> Q]    *)
+
 (*....................................................................
 Exercise 8. What is the result of the following substitution according
 to the definition in Figure 13.3?
@@ -211,16 +217,19 @@ of expr to support unary operations as well.
 type varspec = string ;;
 
 type binop =
-  | Plus 
+  | Plus
+  | Minus
+  | Times
   | Divide ;;
 
 type unop = 
-  | NotYetImplemented ;;
+  | Negate ;;
 
 type expr =
   | Int of int
   | Var of varspec
   | Binop of binop * expr * expr
+  | Unop of unop * expr
   | Let of varspec * expr * expr ;;
 
 (*....................................................................
@@ -250,10 +259,21 @@ variables in the expression
     - : Lab9_soln.VarSet.elt list = ["x"; "y"; "z"]
 ....................................................................*)
 
-module VarSet = struct end ;;
+module VarSet = Set.Make 
+  (struct
+    type t = varspec
+    let compare = String.compare
+  end) ;;
 
-let free_vars (exp : expr) =
-  failwith "free_vars not implemented"
+let rec free_vars (exp : expr) : VarSet.t =
+  match exp with
+  | Var x -> VarSet.singleton x
+  | Int _ -> VarSet.empty
+  | Unop(_, arg) -> free_vars arg
+  | Binop(_, arg1, arg2) ->
+      VarSet.union (free_vars arg1) (free_vars arg2)
+  | Let(x, def, body) ->
+      VarSet.union (free_vars def) (VarSet.remove x (free_vars body));;
 
 (*......................................................................
 Exercise 16: Write a function subst : expr -> varspec -> expr -> expr
@@ -293,7 +313,14 @@ You should get the following behavior:
 ......................................................................*)
 
 let subst (exp : expr) (var_name : varspec) (repl : expr) : expr =
-  failwith "subst not implemented" ;;
+  let rec sub (exp : expr) : expr =
+    match exp with
+    | Var x -> if x = var_name then repl else exp
+    | Int _ -> exp
+    | Unop(op, arg) -> Unop(op, sub arg)
+    | Binop(op, arg1, arg2) -> Binop(op, sub arg1, sub arg2)
+    | Let(x, def, body) -> if x = var_name then Let(x, sub def, body) else Let(x, sub def, sub body)
+  in sub exp ;;
 
 (*......................................................................
 Exercise 17: Complete the eval function below. Try to implement these
@@ -305,8 +332,29 @@ incomplete) start can be found in section 13.4.2 of the textbook.
 exception UnboundVariable of string ;;
 exception IllFormed of string ;;
 
-let eval (e : expr) : expr =
-  failwith "eval not implemented"
+let binopeval (op : binop) (v1 : expr) (v2 : expr) : expr =
+  match op, v1, v2 with
+  | Plus, Int x1, Int x2 -> Int (x1 + x2)
+  | Plus, _, _ -> raise (IllFormed "can't add non-integers")
+  | Minus, Int x1, Int x2 -> Int (x1 - x2)
+  | Minus, _, _ -> raise (IllFormed "can't subtract non-integers")
+  | Times, Int x1, Int x2 -> Int (x1 * x2)
+  | Times, _, _ -> raise (IllFormed "can't multiply non-integers")
+  | Divide, Int x1, Int x2 -> Int (x1 / x2)
+  | Divide, _, _ -> raise (IllFormed "can't divide non-integers") ;;
+
+let unopeval (op : unop) (e : expr) : expr =
+  match op, e with
+  | Negate, Int x -> Int (~- x)
+  | Negate, _ -> raise (IllFormed "can't negate non-integers") ;;
+
+let rec eval (e : expr) : expr =
+  match e with
+  | Int _ -> e
+  | Var x -> raise (UnboundVariable x)
+  | Unop (op, e1) -> unopeval op (eval e1)
+  | Binop (op, e1, e2) -> binopeval op (eval e1) (eval e2)
+  | Let (x, def, body) -> eval (subst body x (eval def)) ;;
 
 (*......................................................................
 Go ahead and test eval by evaluating some arithmetic expressions and 
